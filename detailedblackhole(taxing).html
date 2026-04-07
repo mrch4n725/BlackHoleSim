@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Interstellar Mode Black Hole</title>
+<style>
+  body { margin:0; overflow:hidden; background:black; }
+</style>
+</head>
+<body>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+
+<script>
+
+// --- Scene Setup ---
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(75, innerWidth/innerHeight, 0.1, 1000);
+camera.position.z = 35;
+const renderer = new THREE.WebGLRenderer({antialias:true});
+renderer.setSize(innerWidth, innerHeight);
+document.body.appendChild(renderer.domElement);
+
+// --- Stars (high-density) ---
+const starCount = 20000;
+const starGeo = new THREE.BufferGeometry();
+const starPos = new Float32Array(starCount * 3);
+const starColor = new Float32Array(starCount * 3);
+
+for(let i=0;i<starCount;i++){
+    let theta = Math.random() * 2*Math.PI;
+    let phi = Math.acos(2*Math.random()-1);
+    let r = 150 + Math.random()*50;
+    starPos[i*3]   = r * Math.sin(phi)*Math.cos(theta);
+    starPos[i*3+1] = r * Math.sin(phi)*Math.sin(theta);
+    starPos[i*3+2] = r * Math.cos(phi);
+
+    starColor[i*3] = 1.0;
+    starColor[i*3+1] = 1.0;
+    starColor[i*3+2] = 1.0;
+}
+
+starGeo.setAttribute('position', new THREE.BufferAttribute(starPos,3));
+starGeo.setAttribute('color', new THREE.BufferAttribute(starColor,3));
+
+const starMat = new THREE.PointsMaterial({ size:0.5, vertexColors:true });
+const stars = new THREE.Points(starGeo, starMat);
+scene.add(stars);
+
+// --- Black Hole Core ---
+const BH_RADIUS = 4;
+const blackHole = new THREE.Mesh(
+    new THREE.SphereGeometry(BH_RADIUS,64,64),
+    new THREE.MeshBasicMaterial({color:0x000000})
+);
+scene.add(blackHole);
+
+// --- Accretion Disk (thin, double-sided) ---
+const diskGeo = new THREE.RingGeometry(BH_RADIUS+1, BH_RADIUS+12, 512);
+const diskMat = new THREE.ShaderMaterial({
+    side: THREE.DoubleSide,
+    transparent: true,
+    blending: THREE.AdditiveBlending,
+    uniforms:{
+        time: { value:0 }
+    },
+    vertexShader:`
+        varying vec3 vPos;
+        void main(){
+            vPos = position;
+            gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0);
+        }
+    `,
+    fragmentShader:`
+        varying vec3 vPos;
+        void main(){
+            float r = length(vPos.xy);
+            float angle = atan(vPos.y, vPos.x);
+            float shift = sin(angle);
+
+            vec3 color;
+            if(shift>0.0){ color = vec3(0.3,0.6,1.8)*shift; }
+            else { color = vec3(1.8,0.3,0.1)*(-shift); }
+
+            float brightness = 3.0/(r*0.25);
+            color *= brightness;
+            float alpha = smoothstep(13.0, 4.0, r);
+
+            gl_FragColor = vec4(color, alpha);
+        }
+    `
+});
+const disk = new THREE.Mesh(diskGeo,diskMat);
+disk.rotation.x = Math.PI/2;
+scene.add(disk);
+
+// --- Lens Shader for Stars (screen-space approximation of Schwarzschild lensing) ---
+function lensStars(){
+    const pos = starGeo.attributes.position.array;
+    const col = starGeo.attributes.color.array;
+    for(let i=0;i<starCount;i++){
+        let x = pos[i*3];
+        let y = pos[i*3+1];
+        let z = pos[i*3+2];
+
+        let r = Math.sqrt(x*x + y*y + z*z);
+        if(r < 80){
+            let factor = 60 / (r*r + 10);
+            let theta = Math.atan2(y,x);
+            theta += factor * 0.03; // bending angle
+            let radius = Math.sqrt(x*x + y*y);
+            pos[i*3] = radius*Math.cos(theta);
+            pos[i*3+1] = radius*Math.sin(theta);
+
+            // color shift for Doppler / gravitational lens
+            let shift = factor*0.08;
+            let blue = Math.min(1,1+shift);
+            let red  = Math.max(0,1-shift);
+            col[i*3] = red;      // red channel
+            col[i*3+1] = 1.0;    // green channel stays
+            col[i*3+2] = blue;   // blue channel
+            let bright = 1 + shift*2;
+            col[i*3]   *= bright;
+            col[i*3+1] *= bright;
+            col[i*3+2] *= bright;
+        } else {
+            col[i*3] = 1; col[i*3+1] = 1; col[i*3+2] =1;
+        }
+    }
+    starGeo.attributes.position.needsUpdate = true;
+    starGeo.attributes.color.needsUpdate = true;
+}
+
+// --- Animation ---
+function animate(){
+    requestAnimationFrame(animate);
+
+    disk.rotation.z += 0.008;  // slow disk spin
+    lensStars();
+
+    let t = Date.now()*0.00015;
+    camera.position.x = Math.sin(t)*35;
+    camera.position.z = Math.cos(t)*35;
+    camera.lookAt(0,0,0);
+
+    renderer.render(scene,camera);
+}
+
+animate();
+
+</script>
+
+</body>
+</html>
